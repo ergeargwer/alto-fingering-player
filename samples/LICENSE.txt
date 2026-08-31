@@ -1,0 +1,11 @@
+Alto saxophone note samples in this folder come from:
+
+  Fluid (R3) SoundFont
+  Copyright (c) 2000–2013 Frank Wen
+  License: MIT
+
+  Pre-rendered as MP3 by midi-js-soundfonts
+  https://github.com/gleitz/midi-js-soundfonts
+  License: MIT
+
+Only six notes (Eb3, Bb3, Eb4, Bb4, Eb5, G5) are bundled. The full GM bank is not included.

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>指法測驗 · Alto Fingering Player</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="mode-fingering test-page">
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <h1>指法測驗</h1>
+        <div class="sub">記譜音高鍵盤 · <a href="index.html">返回播放器</a></div>
+      </div>
+      <div class="now-note">
+        <div class="written-name" id="written-name">G4</div>
+        <div class="concert-name" id="concert-name">實音 B♭3</div>
+      </div>
+      <div class="clock">
+        <div class="label">標準初學表</div>
+        <div class="time">B♭3–F♯6</div>
+      </div>
+    </header>
+
+    <main class="stage">
+      <section class="panel fingering-panel">
+        <div class="sax-stage">
+          <div id="sax-mount"></div>
+        </div>
+        <div class="pressed-line" id="pressed-line">目前按下：—</div>
+        <div class="next-hint">游標停在鍵上或點一下可看鍵名</div>
+      </section>
+      <section class="panel test-info">
+        <div class="test-note" id="big-name">G4</div>
+        <div class="test-keys-text" id="keys-text"></div>
+        <div class="test-alt" id="alt-text"></div>
+        <div class="test-chart" id="chart-note">
+          對照：Woodwind Fingering Guide 基本表（記譜音，中音／次中音相同指法）。
+          B♭ 用側 B♭；Bis 為備用。C5 只按左2。D5 起加八度。高 D–F 用掌鍵。
+        </div>
+      </section>
+    </main>
+
+    <section class="keyboard-wrap">
+      <h2>點記譜鋼琴（不是實音）</h2>
+      <div class="piano" id="piano"></div>
+      <div class="chrom-row" id="chrom"></div>
+    </section>
+
+    <footer class="readme">
+      本頁只在瀏覽器運作。點音名後，左邊指法圖必須與初學表一致。
+    </footer>
+  </div>
+  <div id="key-tip" class="key-tip" role="status"></div>
+
+  <script src="fingerings.js"></script>
+  <script>
+    (function () {
+      const F = window.Fingerings;
+      const sax = document.getElementById("sax-mount");
+      const tip = document.getElementById("key-tip");
+      const written = document.getElementById("written-name");
+      const concert = document.getElementById("concert-name");
+      const pressed = document.getElementById("pressed-line");
+      const big = document.getElementById("big-name");
+      const keysText = document.getElementById("keys-text");
+      const altText = document.getElementById("alt-text");
+      const piano = document.getElementById("piano");
+      const chrom = document.getElementById("chrom");
+
+      F.renderSax(sax);
+      F.bindKeyTips(sax, tip);
+
+      const WHITE_PC = { 0: 1, 2: 1, 4: 1, 5: 1, 7: 1, 9: 1, 11: 1 };
+      const whites = [];
+      const blacks = [];
+      for (let m = F.MIDI_MIN; m <= F.MIDI_MAX; m++) {
+        if (WHITE_PC[((m % 12) + 12) % 12]) whites.push(m);
+        else blacks.push(m);
+      }
+
+      function shortName(midi) {
+        return F.prettyName(F.midiToName(midi));
+      }
+
+      function show(midi) {
+        const fing = F.lookupWritten(midi);
+        const name = F.prettyName(fing.name);
+        written.textContent = name;
+        big.textContent = name;
+        concert.textContent = fing.outOfRange ? "音域外" : ("實音 " + F.concertName(F.writtenToConcert(midi)));
+        F.setKeys(sax, fing.outOfRange ? [] : fing.keys, []);
+        pressed.textContent = "目前按下：" + (fing.outOfRange ? "—" : F.keysPhrase(fing.keys));
+        keysText.textContent = fing.outOfRange
+          ? "超出薩克斯標準音域。"
+          : ("按下：" + F.keysPhrase(fing.keys));
+        if (fing.alt && fing.alt.length) {
+          altText.textContent = "備用（" + (fing.altLabel || "替換") + "）：" + F.keysPhrase(fing.alt);
+        } else {
+          altText.textContent = "";
+        }
+        document.querySelectorAll(".wkey, .bkey, .chrom-btn").forEach(function (b) {
+          b.classList.toggle("active", Number(b.dataset.midi) === midi);
+        });
+      }
+
+      const whiteRow = document.createElement("div");
+      whiteRow.className = "piano-white";
+      whites.forEach(function (m) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "wkey";
+        b.dataset.midi = String(m);
+        b.textContent = shortName(m);
+        b.addEventListener("click", function () { show(m); });
+        whiteRow.appendChild(b);
+      });
+      piano.appendChild(whiteRow);
+
+      const blackRow = document.createElement("div");
+      blackRow.className = "piano-black";
+      blacks.forEach(function (m) {
+        let n = 0;
+        whites.forEach(function (w) { if (w < m) n++; });
+        const pct = (n / whites.length) * 100;
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "bkey";
+        b.dataset.midi = String(m);
+        b.style.left = pct + "%";
+        b.textContent = shortName(m);
+        b.addEventListener("click", function () { show(m); });
+        blackRow.appendChild(b);
+      });
+      piano.appendChild(blackRow);
+
+      for (let m = F.MIDI_MIN; m <= F.MIDI_MAX; m++) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "chrom-btn";
+        b.dataset.midi = String(m);
+        b.textContent = shortName(m);
+        b.addEventListener("click", function () { show(m); });
+        chrom.appendChild(b);
+      }
+
+      show(F.nameToMidi("G4"));
+    })();
+  </script>
+</body>
+</html>

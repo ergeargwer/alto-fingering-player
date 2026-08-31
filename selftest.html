@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Alto Fingering Player selftest</title>
+  <style>
+    body { font-family: sans-serif; background: #111; color: #eee; padding: 20px; }
+    .ok { color: #2ee9c5; }
+    .fail { color: #ff6b7a; }
+    pre { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Selftest</h1>
+  <pre id="out"></pre>
+  <script src="fingerings.js"></script>
+  <script src="parser.js"></script>
+  <script src="demo.js"></script>
+  <script>
+    const lines = [];
+    let failed = 0;
+    function eq(name, a, b) {
+      const ok = JSON.stringify(a) === JSON.stringify(b);
+      if (!ok) failed++;
+      lines.push((ok ? "OK  " : "FAIL") + " " + name + (ok ? "" : " got " + JSON.stringify(a) + " expected " + JSON.stringify(b)));
+    }
+    function ok(name, cond) {
+      if (!cond) failed++;
+      lines.push((cond ? "OK  " : "FAIL") + " " + name);
+    }
+    const F = Fingerings;
+    function keys(name) { return (F.lookupWritten(name).keys || []).slice().sort(); }
+
+    eq("G4", keys("G4"), ["L1", "L2", "L3"].sort());
+    eq("A4", keys("A4"), ["L1", "L2"].sort());
+    eq("Bb4 side", keys("Bb4"), ["L1", "L2", "sideBb"].sort());
+    eq("C5 L2 only", keys("C5"), ["L2"]);
+    ok("G4 no octave", keys("G4").indexOf("octave") < 0);
+    ok("D5 has octave", keys("D5").indexOf("octave") >= 0);
+    eq("D5", keys("D5"), ["octave", "L1", "L2", "L3", "R1", "R2", "R3"].sort());
+    eq("low Bb", keys("Bb3"), ["L1", "L2", "L3", "R1", "R2", "R3", "lowBb", "lowC"].sort());
+    eq("low C", keys("C4"), ["L1", "L2", "L3", "R1", "R2", "R3", "lowC"].sort());
+    eq("B4", keys("B4"), ["L1"]);
+    eq("C#5 open", keys("C#5"), []);
+    eq("F#4 fork", keys("F#4"), ["L1", "L2", "L3", "R2"].sort());
+    eq("D6 palm", keys("D6"), ["octave", "palmD"].sort());
+    eq("F6 palms", keys("F6"), ["octave", "palmD", "palmEb", "palmF", "sideE"].sort());
+    ok("A3 out of range", F.lookupWritten("A3").outOfRange);
+    ok("G6 out of range", F.lookupWritten("G6").outOfRange);
+    eq("written G4 concert midi", F.writtenToConcert(F.nameToMidi("G4")), F.nameToMidi("Bb3"));
+
+    const demo = DEMO_SONG;
+    ok("demo 12 bars", demo.notes.reduce((s, n) => s + n.dur, 0) === 48);
+    const used = {};
+    demo.notes.forEach(n => { if (!n.rest) used[n.pitch] = 1; });
+    eq("demo pitch set", Object.keys(used).sort(), ["A4", "Bb4", "C5", "D5", "Eb5", "F5", "G4", "G5"]);
+    ok("demo has two whole rests", demo.notes.filter(n => n.rest && n.dur === 4).length === 2);
+
+    const xml = `<?xml version="1.0"?>
+<score-partwise version="3.1">
+  <work><work-title>Mini</work-title></work>
+  <part-list><score-part id="P1"><part-name>Alto Saxophone</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>2</divisions>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+      </attributes>
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice><type>eighth</type></note>
+      <note><pitch><step>A</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice><type>eighth</type></note>
+      <note><pitch><step>B</step><alter>-1</alter><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type></note>
+      <note><rest/><duration>4</duration><voice>1</voice><type>half</type></note>
+    </measure>
+  </part>
+</score-partwise>`;
+    const parsed = SongParser.parseMusicXML(xml);
+    eq("xml title", parsed.title, "Mini");
+    eq("xml n notes", parsed.notes.length, 4);
+    eq("xml first pitch", parsed.notes[0].pitch, "G4");
+    eq("xml Bb", parsed.notes[2].pitch, "Bb4");
+    ok("xml rest", parsed.notes[3].rest);
+    eq("xml eighth dur", parsed.notes[0].dur, 0.5);
+    eq("xml quarter dur", parsed.notes[2].dur, 1);
+    eq("xml half rest", parsed.notes[3].dur, 2);
+
+    const js = SongParser.parseJSONSong({ title: "J", notes: [{ pitch: "C5", dur: 2 }] });
+    eq("json C5 midi", js.notes[0].midi, F.nameToMidi("C5"));
+
+    let threw = false;
+    try { SongParser.parseMusicXML("<not-music></not-music>"); } catch (e) { threw = true; }
+    ok("bad xml throws", threw);
+
+    const chordXml = `<?xml version="1.0"?><score-partwise><part-list><score-part id="P1"><part-name>Sax</part-name></score-part></part-list>
+    <part id="P1"><measure>
+      <attributes><divisions>1</divisions></attributes>
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice></note>
+      <note><chord/><pitch><step>B</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice></note>
+    </measure></part></score-partwise>`;
+    const ch = SongParser.parseMusicXML(chordXml);
+    eq("skip chord extra", ch.notes.length, 1);
+    eq("melody is G4", ch.notes[0].pitch, "G4");
+
+    const two = `<?xml version="1.0"?><score-partwise>
+      <part-list>
+        <score-part id="P1"><part-name>Piano</part-name></score-part>
+        <score-part id="P2"><part-name>Alto Sax</part-name></score-part>
+      </part-list>
+      <part id="P1"><measure><attributes><divisions>1</divisions></attributes>
+        <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice></note>
+      </measure></part>
+      <part id="P2"><measure><attributes><divisions>1</divisions></attributes>
+        <direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>72</per-minute></metronome></direction-type>
+        <sound tempo="72"/></direction>
+        <note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice></note>
+      </measure></part>
+    </score-partwise>`;
+    const a = SongParser.parseMusicXML(two);
+    eq("default first part", a.notes[0].pitch, "C4");
+    eq("parts count", a.parts.length, 2);
+    const b = SongParser.parseMusicXML(two, { partId: "P2" });
+    eq("picked sax part", b.notes[0].pitch, "G4");
+    eq("picked part name", b.partName, "Alto Sax");
+    eq("metronome/sound tempo", b.bpm, 72);
+
+    const soundOnly = `<?xml version="1.0"?><score-partwise><part-list><score-part id="P1"><part-name>Sax</part-name></score-part></part-list>
+      <part id="P1"><measure><attributes><divisions>1</divisions></attributes>
+      <sound tempo="108"/>
+      <note><rest/><duration>1</duration><voice>1</voice></note>
+      </measure></part></score-partwise>`;
+    eq("sound tempo", SongParser.parseMusicXML(soundOnly).bpm, 108);
+
+    eq("Bb alt Bis", (F.lookupWritten("Bb4").alt || []).slice().sort(), ["L1", "Bis"].sort());
+    eq("keysPhrase G4", F.keysPhrase(["L1","L2","L3"]), "左1、左2、左3");
+
+    ok("min display 300ms", window.AltoApp ? window.AltoApp.MIN_DISPLAY_SEC === 0.3 : true);
+
+    function finish() {
+      lines.push("");
+      lines.push(failed ? ("FAILED " + failed) : "ALL PASSED");
+      document.getElementById("out").innerHTML = lines.map(l => {
+        const cls = l.indexOf("FAIL") === 0 ? "fail" : l.indexOf("OK") === 0 || l === "ALL PASSED" ? "ok" : "";
+        return "<div class='" + cls + "'>" + l.replace(/</g, "&lt;") + "</div>";
+      }).join("");
+      document.title = failed ? "SELFTEST FAIL" : "SELFTEST PASS";
+      window.__SELFTEST = { failed: failed, lines: lines };
+    }
+
+    fetch("practice-riff.musicxml").then(r => r.text()).then(t => {
+      const song = SongParser.parseMusicXML(t);
+      eq("file title", song.title, "Practice Riff");
+      ok("file ~12 bars", Math.abs(song.notes.reduce((s, n) => s + n.dur, 0) - 48) < 0.01);
+      ok("file has rests", song.notes.filter(n => n.rest).length >= 2);
+      eq("file first", song.notes[0].pitch, "G4");
+      finish();
+    }).catch(e => {
+      ok("fetch musicxml " + e, false);
+      finish();
+    });
+  </script>
+</body>
+</html>

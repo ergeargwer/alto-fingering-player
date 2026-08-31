@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Alto Fingering Player · 中音薩克斯指法播放器</title>
+  <meta name="description" content="Alto saxophone fingering practice player. Built-in demo, MusicXML import, live fingering diagram." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="mode-fingering">
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <h1>Alto Fingering Player</h1>
+        <div class="sub">中音薩克斯 · 記譜音高指法 · <a href="fingering-test.html">指法測驗</a></div>
+      </div>
+      <div class="song-meta">
+        <div class="song-title" id="song-title">Practice Riff</div>
+        <div class="song-sub" id="song-sub">4/4 · 示範曲 · 寫法音高</div>
+      </div>
+      <div class="now-note">
+        <div class="written-name" id="written-name">G4</div>
+        <div class="concert-name" id="concert-name">實音 Concert B♭3</div>
+      </div>
+      <div class="clock">
+        <div class="label">播放頭</div>
+        <div class="time" id="clock">0:00 / 0:32</div>
+      </div>
+    </header>
+
+    <div id="banner" class="banner" role="status"></div>
+
+    <section class="onboarding" aria-label="Onboarding">
+      <div class="onboard-copy">
+        <strong>按亮的鍵、吹到下一格</strong>
+        <span>亮鍵按下，吹完換下一格。</span>
+      </div>
+      <div class="onboard-notes" id="onboard-notes"></div>
+    </section>
+
+    <main class="stage">
+      <section class="panel fingering-panel" aria-label="Fingering diagram">
+        <div class="sax-stage">
+          <div id="sax-mount"></div>
+          <div class="status-overlay" id="status-overlay">休止</div>
+          <div class="name-hero" id="name-hero">G4</div>
+          <div class="count-overlay" id="count-overlay" hidden>
+            <div class="count-num" id="count-num">1</div>
+            <div class="count-sub">預備拍</div>
+          </div>
+        </div>
+        <div class="pressed-line" id="pressed-line">目前按下：—</div>
+        <div class="next-hint" id="next-hint">下一音：A4</div>
+      </section>
+
+      <section class="panel strip-panel" aria-label="Note strip">
+        <article class="next-card" id="next-card" aria-live="polite">
+          <div class="next-card-label">下一音</div>
+          <div class="next-card-name" id="next-card-name">A4</div>
+          <div class="next-card-dur" id="next-card-dur">八分音符</div>
+          <div class="next-card-dots" id="next-card-dots"></div>
+          <div class="next-card-keys" id="next-card-keys"></div>
+        </article>
+        <div class="strip-head">
+          <h2>音名條 · 記譜 C D E</h2>
+          <span id="strip-pos" class="song-sub">1 / 1</span>
+        </div>
+        <div class="strip-scroll" id="strip-scroll"></div>
+      </section>
+    </main>
+
+    <section class="transport" aria-label="Transport">
+      <div class="transport-btns">
+        <button class="btn primary" id="btn-play" type="button">▶ 播放</button>
+        <button class="btn" id="btn-stop" type="button">■ 停止</button>
+        <button class="btn active" id="btn-loop" type="button">↻ 循環</button>
+        <button class="btn" id="btn-prev" type="button">⏮ 上一音</button>
+        <button class="btn" id="btn-next" type="button">下一音 ⏭</button>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress" id="progress" role="slider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="進度">
+          <div class="progress-ab" id="progress-ab"></div>
+          <div class="progress-fill" id="progress-fill"></div>
+          <button type="button" class="ab-handle" id="handle-a" aria-label="A 段起點">A</button>
+          <button type="button" class="ab-handle" id="handle-b" aria-label="B 段終點">B</button>
+        </div>
+        <div class="ab-meta">
+          <span id="ab-label">A–B 全曲</span>
+          <span id="pass-badge" class="pass-badge" hidden>第一遍 70%</span>
+          <button type="button" class="ab-reset" id="ab-reset">重設 A–B</button>
+        </div>
+      </div>
+      <div class="sliders">
+        <div class="slider-block">
+          <label>速度 <b id="tempo-val">90</b> BPM</label>
+          <input id="tempo" type="range" min="40" max="160" value="90" />
+        </div>
+        <div class="slider-block">
+          <label>音量 <b id="vol-val">80</b>%</label>
+          <input id="volume" type="range" min="0" max="100" value="80" />
+        </div>
+        <button class="btn" id="btn-mute" type="button" title="靜音不停止指法游標">靜音</button>
+      </div>
+    </section>
+
+    <section class="files" aria-label="File and display">
+      <label class="file-btn">
+        載入 MusicXML / JSON
+        <input id="file-input" type="file" accept=".xml,.musicxml,.json,application/xml,application/json,text/xml" />
+      </label>
+      <button class="btn" id="btn-demo" type="button">使用示範曲</button>
+      <label class="part-pick" id="part-wrap" hidden>
+        聲部
+        <select id="part-select" aria-label="選擇聲部"></select>
+      </label>
+      <label class="toggle" title="若檔案是鋼琴實音，勾選後會上移大六度（+9 半音）成中音薩克斯記譜">
+        <input id="concert-toggle" type="checkbox" />
+        此檔為實音
+      </label>
+      <label class="toggle coach" title="按下播放後先打一小節拍點再開始">
+        <input id="count-in" type="checkbox" checked />
+        預備拍
+      </label>
+      <label class="toggle coach" title="第一遍用設定速度的 70%，第二遍起原速">
+        <input id="slow-start" type="checkbox" />
+        慢速起 70%→100%
+      </label>
+      <label class="part-pick coach" title="指法仍是記譜音；聲音為實音（記譜 −9 半音）">
+        音源：Alto 取樣
+        <select id="voice-select" aria-label="音源">
+          <option value="sample" selected>取樣 Alto</option>
+          <option value="synth">後備合成音</option>
+        </select>
+      </label>
+      <div class="mode-tabs" role="tablist" aria-label="Display mode">
+        <button class="btn active" data-mode="fingering" type="button">指法</button>
+        <button class="btn" data-mode="names" type="button">音名</button>
+        <button class="btn" data-mode="both" type="button">兩者</button>
+      </div>
+    </section>
+
+    <footer class="readme">
+      <b>說明</b>
+      · 檔案只在你的瀏覽器本機開啟，不會上傳，可離線使用。
+      · 指法依中音薩克斯<strong>記譜音高</strong>。鋼琴實音請勾「此檔為實音」。
+      · 音域：記譜 B♭3–F♯6。游標停在鍵上或點一下可看鍵名。
+      · 不亮的鍵＝不按。開管（如 C♯5）＝全部不按。休止＝REST。
+      · 空白鍵 Space＝播放／暫停。預備拍＝開吹前一小節拍點。慢速起＝第一遍 70% 再原速。
+      · 進度條左右拖 A／B 可循環片段。目前音至少顯示 0.3 秒。
+      · <a href="fingering-test.html">指法測驗</a>：用記譜鋼琴核對每一音。曲目只來自本機或示範曲。
+      · 音源：Alto 取樣來自 Fluid (R3) SoundFont（Frank Wen，<strong>MIT</strong>），預渲染 MP3 via midi-js-soundfonts（MIT）。指法仍為記譜音，聽到的是實音（−9 半音）。靜音只關聲音、游標不停。
+    </footer>
+  </div>
+  <div id="key-tip" class="key-tip" role="status"></div>
+
+  <script src="fingerings.js"></script>
+  <script src="parser.js"></script>
+  <script src="demo.js"></script>
+  <script src="sax-audio.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

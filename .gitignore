@@ -1,0 +1,6 @@
+.DS_Store
+*.log
+_*.html
+preview/
+.idea/
+.vscode/
