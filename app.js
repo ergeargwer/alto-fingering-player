@@ -4,7 +4,9 @@
     tempo: "altoFingeringPlayer.tempo",
     mode: "altoFingeringPlayer.displayMode",
     countIn: "altoFingeringPlayer.countIn",
-    slowStart: "altoFingeringPlayer.slowStart"
+    slowStart: "altoFingeringPlayer.slowStart",
+    bb: "altoFingeringPlayer.bb",
+    instrument: "altoFingeringPlayer.instrument"
   };
 
   const MIN_DISPLAY_SEC = 0.3;
@@ -39,7 +41,16 @@
     abB: 1,
     displayIndex: 0,
     displayHoldUntil: 0,
-    dragHandle: null
+    dragHandle: null,
+    bbStyle: "side",
+    libraryItems: [],
+    libraryId: null,
+    libraryDirName: "",
+    uiMode: "prepare",
+    tunerTargetMidi: 67,
+    tunerOn: false,
+    tunerPendingKey: "",
+    tunerPendingSince: 0
   };
 
   let audioCtx = null;
@@ -94,8 +105,39 @@
     abReset: document.getElementById("ab-reset"),
     passBadge: document.getElementById("pass-badge"),
     mute: document.getElementById("btn-mute"),
-    voiceSelect: document.getElementById("voice-select")
+    voiceSelect: document.getElementById("voice-select"),
+    folder: document.getElementById("btn-folder"),
+    dirInput: document.getElementById("dir-input"),
+    libraryPanel: document.getElementById("library-panel"),
+    libraryMeta: document.getElementById("library-meta"),
+    libraryList: document.getElementById("library-list"),
+    libraryFilter: document.getElementById("library-filter"),
+    libraryFolder: document.getElementById("library-folder"),
+    bbSelect: document.getElementById("bb-select"),
+    instSelect: document.getElementById("instrument-select"),
+    instChip: document.getElementById("inst-chip"),
+    instHint: document.getElementById("inst-hint"),
+    practice: document.getElementById("btn-practice"),
+    prepare: document.getElementById("btn-prepare"),
+    playTop: document.getElementById("btn-play-top"),
+    tuner: document.getElementById("tuner"),
+    btnMic: document.getElementById("btn-mic"),
+    tunerStatus: document.getElementById("tuner-status"),
+    tunerTarget: document.getElementById("tuner-target"),
+    tunerTargetConcert: document.getElementById("tuner-target-concert"),
+    tunerNeedle: document.getElementById("tuner-needle"),
+    tunerHeardWritten: document.getElementById("tuner-heard-written"),
+    tunerHeardConcert: document.getElementById("tuner-heard-concert"),
+    tunerCents: document.getElementById("tuner-cents"),
+    tunerVerdict: document.getElementById("tuner-verdict"),
+    tunerKeys: document.getElementById("tuner-keys")
   };
+
+  let micStream = null;
+  let micSource = null;
+  let micAnalyser = null;
+  let micBuf = null;
+  let micRaf = 0;
 
   function showBanner(msg) {
     el.banner.textContent = msg;
@@ -127,6 +169,12 @@
     if (voice === "sample" || voice === "synth") state.voice = voice;
     if (el.voiceSelect) el.voiceSelect.value = state.voice;
     if (localStorage.getItem("altoFingeringPlayer.muted") === "1") state.muted = true;
+    const bb = localStorage.getItem(STORAGE.bb);
+    state.bbStyle = bb === "bis" ? "bis" : "side";
+    if (F.setBbStyle) F.setBbStyle(state.bbStyle);
+    if (el.bbSelect) el.bbSelect.value = state.bbStyle;
+    const instId = localStorage.getItem(STORAGE.instrument);
+    if (instId === "yds-150" || instId === "yas-280") F.setInstrument(instId);
     setDisplayMode(state.displayMode, false);
   }
 
@@ -141,10 +189,79 @@
     state.displayMode = mode;
     document.body.classList.remove("mode-fingering", "mode-names", "mode-both");
     document.body.classList.add("mode-" + mode);
+    if (state.uiMode) document.body.classList.add(state.uiMode);
     document.querySelectorAll(".mode-tabs .btn").forEach(function (b) {
       b.classList.toggle("active", b.getAttribute("data-mode") === mode);
     });
     if (persist !== false) saveMode();
+  }
+
+  function updatePlayButtons() {
+    const label = state.playing ? "⏸ 暫停" : "▶ 播放";
+    if (el.play) el.play.textContent = label;
+    if (el.playTop) el.playTop.textContent = label;
+  }
+
+  function applyInstrumentUi() {
+    const inst = F.getInstrument();
+    document.body.classList.remove("inst-yas-280", "inst-yds-150");
+    document.body.classList.add("inst-" + inst.id);
+    if (el.instSelect) el.instSelect.value = inst.id;
+    if (el.instChip) el.instChip.textContent = inst.name;
+    if (el.instHint) {
+      el.instHint.hidden = !inst.hint;
+      el.instHint.textContent = inst.hint || "";
+    }
+    if (inst.tuner === "demo") {
+      if (state.tunerOn) stopMic({ silent: true });
+      if (el.btnMic) el.btnMic.textContent = "播放示範音";
+      setMicStatus("YDS 請用耳機對示範音");
+      if (el.tunerVerdict) {
+        el.tunerVerdict.className = "tuner-verdict silent";
+        el.tunerVerdict.textContent = "YDS 請用耳機對示範音。按播放示範音，並按下圖上發亮的鍵。";
+      }
+    } else if (!state.tunerOn) {
+      if (el.btnMic) el.btnMic.textContent = "開啟麥克風";
+      setMicStatus("麥克風關閉 · 音訊只在本機，不會上傳");
+    }
+  }
+
+  function applyInstrument(id, persist) {
+    const inst = F.setInstrument(id);
+    if (persist !== false) localStorage.setItem(STORAGE.instrument, inst.id);
+    applyInstrumentUi();
+    F.renderSax(el.sax);
+    F.bindKeyTips(el.sax, el.tip);
+    renderTunerKeys();
+    if (state.song) {
+      loadSong(state.song, {
+        concertFile: state.concertFile,
+        reset: false,
+        libraryId: state.libraryId
+      });
+    } else {
+      paintAtBeat(currentAbsBeat());
+    }
+  }
+
+  function playYdsDemoTone() {
+    const midi = state.tunerTargetMidi;
+    if (midi == null) return;
+    ensureAudio();
+    playSax(F.writtenToConcert(midi), audioCtx.currentTime, 1.15);
+    if (el.tunerVerdict) {
+      el.tunerVerdict.className = "tuner-verdict silent";
+      el.tunerVerdict.textContent = "YDS 請用耳機對示範音 · 請按：" +
+        F.keysPhrase((F.lookupWritten(midi) || {}).keys || []);
+    }
+  }
+
+  function setUiMode(mode) {
+    state.uiMode = mode === "practice" ? "practice" : "prepare";
+    document.body.classList.remove("prepare", "practice");
+    document.body.classList.add(state.uiMode);
+    if (state.uiMode === "practice") stopMic({ silent: true });
+    updatePlayButtons();
   }
 
   function ensureAudio() {
@@ -182,6 +299,229 @@
     if (!el.mute) return;
     el.mute.classList.toggle("active", state.muted);
     el.mute.textContent = state.muted ? "取消靜音" : "靜音";
+  }
+
+  function highlightTunerKey(midi) {
+    if (!el.tunerKeys) return;
+    el.tunerKeys.querySelectorAll(".tuner-key").forEach(function (b) {
+      b.classList.toggle("active", Number(b.dataset.midi) === midi);
+    });
+  }
+
+  function setTunerTarget(midi) {
+    if (midi == null || !Number.isFinite(Number(midi))) return;
+    midi = Math.round(midi);
+    state.tunerTargetMidi = midi;
+    const name = F.prettyName(F.midiToName(midi));
+    if (el.tunerTarget) el.tunerTarget.textContent = name;
+    if (el.tunerTargetConcert) {
+      el.tunerTargetConcert.textContent = "應對實音 " + F.concertName(F.writtenToConcert(midi));
+    }
+    highlightTunerKey(midi);
+  }
+
+  function showDiagramNote(midi, opts) {
+    opts = opts || {};
+    const fing = F.lookupWritten(midi);
+    if (!fing) return;
+    const name = F.prettyName(fing.name);
+    el.written.textContent = name;
+    el.hero.textContent = name;
+    if (fing.outOfRange) {
+      el.concert.textContent = "音域外";
+      F.setKeys(el.sax, [], []);
+      if (el.pressed) el.pressed.textContent = "目前按下：—";
+    } else {
+      el.concert.textContent = "實音 " + F.concertName(F.writtenToConcert(midi));
+      F.setKeys(el.sax, fing.keys, []);
+      if (!fing.keys.length) {
+        el.overlay.textContent = "開管";
+        el.overlay.className = "status-overlay show";
+      } else {
+        el.overlay.className = "status-overlay";
+      }
+      if (el.pressed) el.pressed.textContent = "目前按下：" + F.keysPhrase(fing.keys);
+    }
+    setTunerTarget(midi);
+    if (opts.play && !state.playing) {
+      ensureAudio();
+      playSax(F.writtenToConcert(midi), audioCtx.currentTime, 0.55);
+    }
+  }
+
+  function renderTunerKeys() {
+    if (!el.tunerKeys) return;
+    el.tunerKeys.innerHTML = "";
+    const min = (F.getInstrument() && F.getInstrument().midiMin) || F.MIDI_MIN;
+    for (let m = min; m <= F.MIDI_MAX; m++) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "tuner-key";
+      b.dataset.midi = String(m);
+      b.textContent = F.prettyName(F.midiToName(m));
+      b.addEventListener("click", function () {
+        showDiagramNote(m, { play: false });
+      });
+      el.tunerKeys.appendChild(b);
+    }
+    highlightTunerKey(state.tunerTargetMidi);
+  }
+
+  function micErrorMessage(err) {
+    const name = err && err.name;
+    if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+      return "沒有麥克風權限。請在 Safari 或 Chrome 允許本頁使用麥克風。";
+    }
+    if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+      return "找不到麥克風。請接上或啟用麥克風後再試。";
+    }
+    if (name === "NotReadableError") {
+      return "麥克風正被其他程式占用。";
+    }
+    if (location.protocol !== "https:" && location.hostname !== "127.0.0.1" && location.hostname !== "localhost") {
+      return "對音需要 HTTPS 或本機伺服器。請用 GitHub Pages 或 http://127.0.0.1。";
+    }
+    return "無法開啟麥克風。" + (err && err.message ? err.message : "");
+  }
+
+  function setMicStatus(text) {
+    if (el.tunerStatus) el.tunerStatus.textContent = text;
+  }
+
+  function updateNeedle(analysis) {
+    if (!el.tunerNeedle) return;
+    const T = window.PitchTuner;
+    if (!analysis || !analysis.ok) {
+      el.tunerNeedle.style.left = "50%";
+      el.tunerNeedle.style.background = "var(--muted)";
+      if (el.tunerHeardWritten) el.tunerHeardWritten.textContent = "—";
+      if (el.tunerHeardConcert) el.tunerHeardConcert.textContent = "—";
+      if (el.tunerCents) el.tunerCents.textContent = "—";
+      return;
+    }
+    const cents = T.centsVsWritten(analysis.freq, state.tunerTargetMidi);
+    const pct = ((clamp(cents, -50, 50) + 50) / 100) * 100;
+    el.tunerNeedle.style.left = pct + "%";
+    const abs = Math.abs(cents);
+    el.tunerNeedle.style.background = abs < 25 ? "var(--teal)" : abs <= 50 ? "var(--warn)" : "var(--danger)";
+    if (el.tunerHeardWritten) {
+      el.tunerHeardWritten.textContent = F.prettyName(F.midiToName(analysis.writtenMidi));
+    }
+    if (el.tunerHeardConcert) {
+      el.tunerHeardConcert.textContent = F.concertName(analysis.concertMidi);
+    }
+    if (el.tunerCents) {
+      el.tunerCents.textContent = (cents >= 0 ? "+" : "") + Math.round(cents) + " ¢";
+    }
+  }
+
+  function commitVerdict(v) {
+    if (!el.tunerVerdict) return;
+    const targetName = F.prettyName(F.midiToName(state.tunerTargetMidi));
+    el.tunerVerdict.className = "tuner-verdict " + (v && v.state ? v.state : "silent");
+    if (!v || v.state === "silent") {
+      el.tunerVerdict.textContent = state.tunerOn
+        ? "聽不到音。吹大聲一點，或檢查麥克風。"
+        : "點圖上的音或下方記譜鍵盤，吹同一個音來對準。";
+      return;
+    }
+    if (v.state === "match") {
+      el.tunerVerdict.textContent = "準了 · " + targetName;
+    } else if (v.state === "near" || v.state === "off") {
+      el.tunerVerdict.textContent = (v.sharp ? "偏高" : "偏低") + " · 再往" + (v.sharp ? "低" : "高") + "一點";
+    } else if (v.state === "wrong") {
+      const heard = F.prettyName(F.midiToName(v.heardWrittenMidi));
+      el.tunerVerdict.textContent = "你吹的記譜是 " + heard + "，目標是 " + targetName;
+    }
+  }
+
+  function stopMic(opts) {
+    opts = opts || {};
+    state.tunerOn = false;
+    if (micRaf) {
+      cancelAnimationFrame(micRaf);
+      micRaf = 0;
+    }
+    if (micSource) {
+      try { micSource.disconnect(); } catch (e) { /* ignore */ }
+      micSource = null;
+    }
+    micAnalyser = null;
+    micBuf = null;
+    if (micStream) {
+      micStream.getTracks().forEach(function (t) { t.stop(); });
+      micStream = null;
+    }
+    if (el.btnMic) el.btnMic.textContent = "開啟麥克風";
+    if (!opts.silent) setMicStatus("麥克風關閉 · 音訊只在本機，不會上傳");
+    else setMicStatus("練習中不使用麥克風");
+    updateNeedle(null);
+    if (!opts.silent) commitVerdict({ state: "silent" });
+  }
+
+  function onPitchFrame() {
+    if (!state.tunerOn || state.uiMode !== "prepare" || !micAnalyser || !window.PitchTuner) {
+      return;
+    }
+    micAnalyser.getFloatTimeDomainData(micBuf);
+    const analysis = window.PitchTuner.analyze(micBuf, audioCtx.sampleRate);
+    const v = window.PitchTuner.verdict(analysis, state.tunerTargetMidi);
+    const now = performance.now();
+    const key = v.state + ":" + (v.heardWrittenMidi == null ? "" : v.heardWrittenMidi) +
+      ":" + (v.sharp ? "+" : "-");
+    if (key !== state.tunerPendingKey) {
+      state.tunerPendingKey = key;
+      state.tunerPendingSince = now;
+    }
+    updateNeedle(analysis);
+    if (now - state.tunerPendingSince >= 300) commitVerdict(v);
+    micRaf = requestAnimationFrame(onPitchFrame);
+  }
+
+  async function startMic() {
+    if (state.uiMode !== "prepare") return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showBanner("此瀏覽器不支援麥克風對音。請用 iPad Safari 或電腦 Chrome／Safari。");
+      return;
+    }
+    try {
+      ensureAudio();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false
+        }
+      });
+      micStream = stream;
+      micSource = audioCtx.createMediaStreamSource(stream);
+      micAnalyser = audioCtx.createAnalyser();
+      micAnalyser.fftSize = 2048;
+      micSource.connect(micAnalyser);
+      micBuf = new Float32Array(micAnalyser.fftSize);
+      state.tunerOn = true;
+      state.tunerPendingKey = "";
+      state.tunerPendingSince = performance.now();
+      if (el.btnMic) el.btnMic.textContent = "關閉麥克風";
+      setMicStatus("聆聽中 · 音訊只在本機，不會上傳");
+      hideBanner();
+      if (micRaf) cancelAnimationFrame(micRaf);
+      micRaf = requestAnimationFrame(onPitchFrame);
+    } catch (err) {
+      stopMic({ silent: true });
+      const msg = micErrorMessage(err);
+      setMicStatus(msg);
+      showBanner(msg);
+    }
+  }
+
+  function toggleMic() {
+    if (F.getInstrument().tuner === "demo") {
+      playYdsDemoTone();
+      return;
+    }
+    if (state.tunerOn) stopMic();
+    else startMic();
   }
 
   function compileSong(song, concertFile) {
@@ -227,9 +567,23 @@
     };
   }
 
+  function sourceLabel(song) {
+    if (!song) return "";
+    if (song.source === "demo") return "示範曲";
+    if (song.source === "json") return "JSON";
+    if (song.source === "mxl") return "MusicXML（.mxl）";
+    if (song.source === "musicxml") return "MusicXML";
+    return "";
+  }
+
   function loadSong(song, opts) {
     opts = opts || {};
-    stopPlayback(opts.reset !== false);
+    const keepPos = opts.reset === false;
+    const abs = keepPos ? currentAbsBeat() : 0;
+    const prevA = state.abA;
+    const prevB = state.abB;
+    const wasPlaying = keepPos && state.playing && !state.countingIn;
+    stopPlayback(!keepPos);
     state.song = song;
     state.concertFile = !!opts.concertFile;
     el.concertToggle.checked = state.concertFile;
@@ -237,23 +591,35 @@
     state.events = compiled.events;
     state.totalBeats = compiled.totalBeats;
     state.beatsPerBar = compiled.beatsPerBar;
-    state.index = 0;
-    state.absBeat = 0;
     el.title.textContent = compiled.title;
-    const src = song.source === "demo" ? "示範曲" : song.source === "json" ? "JSON" : song.source === "musicxml" ? "MusicXML" : "";
+    const src = sourceLabel(song);
     const pitchKind = state.concertFile ? "來源：實音 → 已移調 +9" : "記譜音高";
     const partBit = song.partName ? " · " + song.partName : "";
     el.sub.textContent = compiled.beatsPerBar + "/4 · " + src + partBit + " · " + pitchKind;
     fillPartSelect(song);
-    state.abA = 0;
-    state.abB = compiled.totalBeats;
-    state.passIndex = 0;
-    state.displayIndex = 0;
-    state.displayHoldUntil = 0;
+    if (keepPos) {
+      state.abA = clamp(prevA, 0, Math.max(0, compiled.totalBeats - 0.25));
+      state.abB = clamp(prevB, state.abA + 0.25, compiled.totalBeats);
+      state.absBeat = clamp(abs, 0, compiled.totalBeats);
+      state.index = indexAtBeat(state.absBeat);
+      state.displayIndex = state.index;
+      state.displayHoldUntil = 0;
+    } else {
+      state.index = 0;
+      state.absBeat = 0;
+      state.abA = 0;
+      state.abB = compiled.totalBeats;
+      state.passIndex = 0;
+      state.displayIndex = 0;
+      state.displayHoldUntil = 0;
+      state.libraryId = opts.libraryId || null;
+    }
     renderStrip();
-    paintAtBeat(0);
-    updateClock(0);
+    paintAtBeat(state.absBeat);
+    updateClock(state.absBeat);
     updateAbUi();
+    renderLibrary();
+    if (wasPlaying) startPlayback({ resume: true });
   }
 
   function tempoScale() {
@@ -542,6 +908,7 @@
       const ghost = next && !next.rest && !next.outOfRange ? next.keys : [];
       F.setKeys(el.sax, ev.keys, ghost);
       if (el.pressed) el.pressed.textContent = "目前按下：" + F.keysPhrase(ev.keys);
+      if (ev.writtenMidi != null) setTunerTarget(ev.writtenMidi);
     }
 
     if (next) {
@@ -687,7 +1054,7 @@
       hideCountOverlay();
       state.playStartAudio = t0;
     }
-    el.play.textContent = "⏸ 暫停";
+    updatePlayButtons();
     updatePassBadge();
     paintAtBeat(startBeat);
     scheduler();
@@ -715,7 +1082,7 @@
     cancelAnimationFrame(rafId);
     stopVoices();
     hideCountOverlay();
-    el.play.textContent = "▶ 播放";
+    updatePlayButtons();
     paintAtBeat(state.absBeat);
     updateClock(state.absBeat);
   }
@@ -730,7 +1097,7 @@
     cancelAnimationFrame(rafId);
     stopVoices();
     hideCountOverlay();
-    el.play.textContent = "▶ 播放";
+    updatePlayButtons();
     if (reset) {
       state.absBeat = loopStart();
       state.index = indexAtBeat(state.absBeat);
@@ -845,17 +1212,7 @@
       card.addEventListener("click", function () {
         document.querySelectorAll(".onboard-card").forEach(function (c) { c.classList.remove("active"); });
         card.classList.add("active");
-        const fing = F.lookupWritten(midi);
-        F.setKeys(el.sax, fing.keys, []);
-        el.written.textContent = F.prettyName(name);
-        el.hero.textContent = F.prettyName(name);
-        el.concert.textContent = "實音 " + F.concertName(F.writtenToConcert(midi));
-        el.overlay.className = "status-overlay";
-        if (el.pressed) el.pressed.textContent = "目前按下：" + F.keysPhrase(fing.keys);
-        if (!state.playing) {
-          ensureAudio();
-          playSax(F.writtenToConcert(midi), audioCtx.currentTime, 0.55);
-        }
+        showDiagramNote(midi, { play: true });
       });
       el.onboard.appendChild(card);
     });
@@ -881,22 +1238,150 @@
 
   function useDemo() {
     hideBanner();
+    state.libraryId = null;
     loadSong(window.DEMO_SONG, { concertFile: false, reset: true });
   }
 
-  async function onFile(file) {
+  function fallbackTitle(song, filename) {
+    if (!song.title || song.title === "匯入曲" || song.title === "JSON 曲") {
+      song.title = String(filename || "").replace(/\.(musicxml|xml|mxl|json)$/i, "") || song.title;
+    }
+    return song;
+  }
+
+  async function onFile(file, opts) {
+    opts = opts || {};
     if (!file) return;
     try {
-      const text = await file.text();
-      const song = window.SongParser.parseFileText(text, file.name);
+      const buf = await file.arrayBuffer();
+      const song = await window.SongParser.parseFile(buf, file.name);
       hideBanner();
-      if (!song.title || song.title === "匯入曲" || song.title === "JSON 曲") {
-        song.title = file.name.replace(/\.(musicxml|xml|json)$/i, "");
-      }
-      loadSong(song, { concertFile: el.concertToggle.checked, reset: true });
+      fallbackTitle(song, file.name);
+      loadSong(song, {
+        concertFile: el.concertToggle.checked,
+        reset: true,
+        libraryId: opts.libraryId || null
+      });
     } catch (err) {
-      showBanner("無法解析檔案，仍可播放示範曲。" + (err && err.message ? err.message : String(err)));
-      useDemo();
+      const msg = "無法解析檔案。" + (err && err.message ? err.message : String(err));
+      showBanner(opts.keepSong ? msg : (msg + " 仍可播放示範曲。"));
+      if (!opts.keepSong) useDemo();
+    }
+  }
+
+  function compactPortrait() {
+    return window.matchMedia("(max-width: 760px) and (orientation: portrait)").matches;
+  }
+
+  function renderLibrary() {
+    if (!el.libraryList) return;
+    const Lib = window.ScoreLibrary;
+    const q = ((el.libraryFilter && el.libraryFilter.value) || "").trim().toLowerCase();
+    const items = (state.libraryItems || []).filter(function (it) {
+      if (!q) return true;
+      return (it.title + " " + it.name + " " + it.folder + " " + it.path).toLowerCase().indexOf(q) >= 0;
+    });
+    const n = state.libraryItems.length;
+    if (el.libraryMeta) {
+      el.libraryMeta.textContent = n
+        ? (q ? ("顯示 " + items.length + "／" + n + " 首") : (n + " 首 · 不上傳"))
+        : "選資料夾後列出曲目，檔案不離開這台機器";
+    }
+    if (el.libraryFolder) {
+      el.libraryFolder.textContent = state.libraryDirName || "";
+    }
+    el.libraryList.innerHTML = "";
+    if (!n) {
+      const empty = document.createElement("p");
+      empty.className = "lib-empty";
+      empty.textContent = "按「選擇樂譜資料夾」，指向本機 Music/scores 或 MuseScore 的 Scores。不會做成公開曲庫。";
+      el.libraryList.appendChild(empty);
+      return;
+    }
+    if (!items.length) {
+      const empty = document.createElement("p");
+      empty.className = "lib-empty";
+      empty.textContent = "沒有符合的曲目。";
+      el.libraryList.appendChild(empty);
+      return;
+    }
+    const groups = Lib.groupItems(items);
+    groups.forEach(function (g) {
+      const wrap = document.createElement("div");
+      wrap.className = "lib-group";
+      const h = document.createElement("h3");
+      h.textContent = g.folder;
+      wrap.appendChild(h);
+      const row = document.createElement("div");
+      row.className = "lib-songs";
+      g.items.forEach(function (it) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "lib-song" + (it.id === state.libraryId ? " active" : "");
+        b.dataset.id = it.id;
+        const t = document.createElement("span");
+        t.className = "lib-song-title";
+        t.textContent = it.title;
+        const f = document.createElement("span");
+        f.className = "lib-song-file";
+        f.textContent = it.name;
+        b.appendChild(t);
+        b.appendChild(f);
+        b.addEventListener("click", function () { openLibraryItem(it); });
+        row.appendChild(b);
+      });
+      wrap.appendChild(row);
+      el.libraryList.appendChild(wrap);
+    });
+  }
+
+  async function openLibraryItem(entry) {
+    try {
+      const file = await window.ScoreLibrary.readEntry(entry);
+      await onFile(file, { keepSong: true, libraryId: entry.id });
+    } catch (err) {
+      showBanner("打不開這首：" + (err && err.message ? err.message : String(err)));
+    }
+  }
+
+  function applyLibraryItems(items, dirName, persistOpen) {
+    state.libraryItems = items || [];
+    state.libraryDirName = dirName || "";
+    renderLibrary();
+    if (el.libraryPanel && persistOpen !== false && state.libraryItems.length && !compactPortrait()) {
+      el.libraryPanel.open = true;
+    }
+  }
+
+  async function pickFolder() {
+    const Lib = window.ScoreLibrary;
+    if (Lib && Lib.canRememberFolder()) {
+      try {
+        const handle = await window.showDirectoryPicker({ mode: "read" });
+        await Lib.saveHandle(handle);
+        const items = await Lib.fromDirectoryHandle(handle);
+        applyLibraryItems(items, handle.name, true);
+        return;
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+        showBanner("無法記住資料夾，改用一次選取。" + (err && err.message ? err.message : ""));
+      }
+    }
+    if (el.dirInput) el.dirInput.click();
+  }
+
+  async function restoreLibrary() {
+    const Lib = window.ScoreLibrary;
+    if (!Lib) return;
+    try {
+      const handle = await Lib.loadHandle();
+      if (!handle) return;
+      const perm = await Lib.permission(handle);
+      if (perm !== "granted") return;
+      const items = await Lib.fromDirectoryHandle(handle);
+      applyLibraryItems(items, handle.name, !compactPortrait());
+    } catch (e) {
+      /* stale handle — user can pick again */
     }
   }
 
@@ -1012,13 +1497,59 @@
     if (el.partSelect) el.partSelect.addEventListener("change", onPartChange);
     el.concertToggle.addEventListener("change", function () {
       if (!state.song) return;
-      const abs = currentAbsBeat();
-      const playing = state.playing;
-      loadSong(state.song, { concertFile: el.concertToggle.checked, reset: false });
-      state.absBeat = abs;
-      paintAtBeat(abs);
-      updateClock(abs);
-      if (playing) startPlayback();
+      loadSong(state.song, {
+        concertFile: el.concertToggle.checked,
+        reset: false,
+        libraryId: state.libraryId
+      });
+    });
+    if (el.instSelect) {
+      el.instSelect.addEventListener("change", function () {
+        applyInstrument(el.instSelect.value, true);
+      });
+    }
+    if (el.bbSelect) {
+      el.bbSelect.addEventListener("change", function () {
+        state.bbStyle = el.bbSelect.value === "bis" ? "bis" : "side";
+        localStorage.setItem(STORAGE.bb, state.bbStyle);
+        if (F.setBbStyle) F.setBbStyle(state.bbStyle);
+        if (!state.song) return;
+        loadSong(state.song, {
+          concertFile: el.concertToggle.checked,
+          reset: false,
+          libraryId: state.libraryId
+        });
+      });
+    }
+    if (el.folder) el.folder.addEventListener("click", pickFolder);
+    if (el.dirInput) {
+      el.dirInput.addEventListener("change", function () {
+        const files = el.dirInput.files;
+        if (!files || !files.length) return;
+        const items = window.ScoreLibrary.fromFileList(files);
+        const first = files[0];
+        const rel = first.webkitRelativePath || "";
+        const root = rel.split("/")[0] || "樂譜";
+        applyLibraryItems(items, root, true);
+        el.dirInput.value = "";
+        if (!window.ScoreLibrary.canRememberFolder()) {
+          showBanner("此瀏覽器重新整理後需再選資料夾。檔案仍只在本機。");
+        }
+      });
+    }
+    if (el.libraryFilter) {
+      el.libraryFilter.addEventListener("input", renderLibrary);
+    }
+    if (el.practice) {
+      el.practice.addEventListener("click", function () { setUiMode("practice"); });
+    }
+    if (el.prepare) {
+      el.prepare.addEventListener("click", function () { setUiMode("prepare"); });
+    }
+    if (el.playTop) el.playTop.addEventListener("click", togglePlay);
+    if (el.btnMic) el.btnMic.addEventListener("click", toggleMic);
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden && state.tunerOn) stopMic();
     });
     document.querySelectorAll(".mode-tabs .btn").forEach(function (b) {
       b.addEventListener("click", function () {
@@ -1041,15 +1572,25 @@
   }
 
   function init() {
+    loadSettings();
+    applyInstrumentUi();
     F.renderSax(el.sax);
     F.bindKeyTips(el.sax, el.tip);
-    loadSettings();
     updateMuteBtn();
     renderOnboarding();
     bind();
+    renderTunerKeys();
+    setTunerTarget(F.nameToMidi("G4"));
+    setUiMode("prepare");
     useDemo();
+    if (compactPortrait() && el.libraryPanel) el.libraryPanel.open = false;
+    restoreLibrary();
     const q = new URLSearchParams(location.search);
     if (q.get("mode")) setDisplayMode(q.get("mode"), false);
+    if (q.get("inst") === "yds-150" || q.get("inst") === "yas-280") {
+      applyInstrument(q.get("inst"), false);
+    }
+    if (q.get("ui") === "practice") setUiMode("practice");
     if (q.get("seek")) {
       const i = parseInt(q.get("seek"), 10);
       if (Number.isFinite(i)) seekToIndex(i);
@@ -1060,6 +1601,9 @@
       compileSong: compileSong,
       Fingerings: F,
       parser: window.SongParser,
+      PitchTuner: window.PitchTuner,
+      setUiMode: setUiMode,
+      setTunerTarget: setTunerTarget,
       MIN_DISPLAY_SEC: MIN_DISPLAY_SEC,
       SLOW_START_SCALE: SLOW_START_SCALE,
       effectiveTempo: effectiveTempo,

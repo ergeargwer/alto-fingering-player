@@ -13,6 +13,13 @@
         <h1>指法測驗</h1>
         <div class="sub">記譜音高鍵盤 · <a href="index.html">返回播放器</a></div>
       </div>
+      <label class="part-pick">
+        我的樂器
+        <select id="instrument-select" aria-label="我的樂器">
+          <option value="yas-280" selected>YAS-280（原聲中音）</option>
+          <option value="yds-150">YDS-150（數位薩克斯）</option>
+        </select>
+      </label>
       <div class="now-note">
         <div class="written-name" id="written-name">G4</div>
         <div class="concert-name" id="concert-name">實音 B♭3</div>
@@ -35,9 +42,16 @@
         <div class="test-note" id="big-name">G4</div>
         <div class="test-keys-text" id="keys-text"></div>
         <div class="test-alt" id="alt-text"></div>
+        <label class="part-pick" style="align-self:flex-start">
+          B♭
+          <select id="bb-select" aria-label="B♭ 指法">
+            <option value="side" selected>側 B♭（基本）</option>
+            <option value="bis">Bis B♭（備用）</option>
+          </select>
+        </label>
         <div class="test-chart" id="chart-note">
           對照：Woodwind Fingering Guide 基本表（記譜音，中音／次中音相同指法）。
-          B♭ 用側 B♭；Bis 為備用。C5 只按左2。D5 起加八度。高 D–F 用掌鍵。
+          B♭ 預設側 B♭；可改 Bis。C5 只按左2。D5 起加八度。高 D–F 用掌鍵。
         </div>
       </section>
     </main>
@@ -68,6 +82,9 @@
       const altText = document.getElementById("alt-text");
       const piano = document.getElementById("piano");
       const chrom = document.getElementById("chrom");
+      const bbSelect = document.getElementById("bb-select");
+      const instSelect = document.getElementById("instrument-select");
+      let currentMidi = F.nameToMidi("G4");
 
       F.renderSax(sax);
       F.bindKeyTips(sax, tip);
@@ -75,7 +92,8 @@
       const WHITE_PC = { 0: 1, 2: 1, 4: 1, 5: 1, 7: 1, 9: 1, 11: 1 };
       const whites = [];
       const blacks = [];
-      for (let m = F.MIDI_MIN; m <= F.MIDI_MAX; m++) {
+      const pianoMin = F.MIDI_LOW_A || F.MIDI_MIN;
+      for (let m = pianoMin; m <= F.MIDI_MAX; m++) {
         if (WHITE_PC[((m % 12) + 12) % 12]) whites.push(m);
         else blacks.push(m);
       }
@@ -85,6 +103,7 @@
       }
 
       function show(midi) {
+        currentMidi = midi;
         const fing = F.lookupWritten(midi);
         const name = F.prettyName(fing.name);
         written.textContent = name;
@@ -135,7 +154,7 @@
       });
       piano.appendChild(blackRow);
 
-      for (let m = F.MIDI_MIN; m <= F.MIDI_MAX; m++) {
+      for (let m = pianoMin; m <= F.MIDI_MAX; m++) {
         const b = document.createElement("button");
         b.type = "button";
         b.className = "chrom-btn";
@@ -145,7 +164,22 @@
         chrom.appendChild(b);
       }
 
-      show(F.nameToMidi("G4"));
+      if (bbSelect) {
+        bbSelect.addEventListener("change", function () {
+          F.setBbStyle(bbSelect.value === "bis" ? "bis" : "side");
+          show(currentMidi);
+        });
+      }
+      if (instSelect) {
+        instSelect.addEventListener("change", function () {
+          F.setInstrument(instSelect.value);
+          F.renderSax(sax);
+          F.bindKeyTips(sax, tip);
+          show(currentMidi);
+        });
+      }
+
+      show(currentMidi);
     })();
   </script>
 </body>

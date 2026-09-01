@@ -27,8 +27,9 @@
  *   D5  → octave + L123 R123
  */
 (function (global) {
-  const MIDI_MIN = 58; // Bb3
+  const MIDI_MIN = 58; // Bb3 (YAS-280)
   const MIDI_MAX = 90; // F#6
+  const MIDI_LOW_A = 57; // A3 — YDS-150 Low A only
   const ALTO_TRANSPOSE = 9; // written = concert + major 6th
 
   const CANON = [
@@ -112,6 +113,7 @@
   }
 
   // —— First octave (no octave key) ——
+  set(57, k(ALL6.concat(["lowA"])));                      // A3   Low A (YDS-150 only)
   set(58, k(ALL6.concat(["lowBb", "lowC"])));             // Bb3  low Bb
   set(59, k(ALL6.concat(["lowB", "lowC"])));              // B3   low B
   set(60, k(ALL6.concat(["lowC"])));                      // C4   low C
@@ -150,6 +152,7 @@
 
   const KEY_INFO = {
     octave: { label: "Oct", group: "thumb", zh: "八度鍵", hint: "左手拇指" },
+    lowA: { label: "A", group: "thumb", zh: "低A", hint: "YDS-150 · 八度鍵下方" },
     frontF: { label: "f", group: "left", zh: "前F", hint: "高音備用" },
     L1: { label: "L1", group: "left", zh: "左1", hint: "左手食指 · B鍵" },
     Bis: { label: "Bis", group: "left", zh: "Bis B♭", hint: "左1旁小鍵" },
@@ -187,14 +190,90 @@
     }).join("、");
   }
 
+  const INSTRUMENTS = {
+    "yas-280": {
+      id: "yas-280",
+      name: "YAS-280",
+      label: "YAS-280（原聲中音）",
+      midiMin: MIDI_MIN,
+      midiMax: MIDI_MAX,
+      extraKeys: [],
+      tuner: "mic",
+      hint: ""
+    },
+    "yds-150": {
+      id: "yds-150",
+      name: "YDS-150",
+      label: "YDS-150（數位薩克斯）",
+      midiMin: MIDI_LOW_A,
+      midiMax: MIDI_MAX,
+      extraKeys: ["lowA"],
+      tuner: "demo",
+      hint: "樂器請選 A.xx Alto 音色"
+    }
+  };
+
+  let currentInstrument = INSTRUMENTS["yas-280"];
+
+  function hasInstrumentKey(id) {
+    if (id === "lowA") return currentInstrument.id === "yds-150";
+    return true;
+  }
+
+  function setInstrument(id) {
+    currentInstrument = INSTRUMENTS[id] || INSTRUMENTS["yas-280"];
+    return currentInstrument;
+  }
+
+  function getInstrument() {
+    return currentInstrument;
+  }
+
+  function filterKeys(ids) {
+    return (ids || []).filter(hasInstrumentKey);
+  }
+
+  let bbStyle = "side";
+
+  function setBbStyle(style) {
+    bbStyle = style === "bis" ? "bis" : "side";
+    return bbStyle;
+  }
+
+  function getBbStyle() {
+    return bbStyle;
+  }
+
   function lookupWritten(midiOrName) {
     let midi = typeof midiOrName === "number" ? midiOrName : nameToMidi(midiOrName);
     if (midi == null || Number.isNaN(midi)) return null;
     midi = Math.round(midi);
-    if (midi < MIDI_MIN || midi > MIDI_MAX) {
+    if (midi < MIDI_LOW_A || midi > MIDI_MAX) {
       return { midi: midi, name: midiToName(midi), keys: [], outOfRange: true };
     }
-    return BY_MIDI[midi] || { midi: midi, name: midiToName(midi), keys: [], outOfRange: true };
+    const inst = currentInstrument;
+    if (midi < inst.midiMin || midi > inst.midiMax) {
+      return { midi: midi, name: midiToName(midi), keys: [], outOfRange: true };
+    }
+    const row = BY_MIDI[midi] || { midi: midi, name: midiToName(midi), keys: [], outOfRange: true };
+    if (row.outOfRange) return row;
+    if (bbStyle === "bis" && row.alt && row.alt.length) {
+      return {
+        midi: row.midi,
+        name: row.name,
+        keys: filterKeys(row.alt),
+        alt: filterKeys(row.keys),
+        altLabel: "側 B♭",
+        bb: "bis"
+      };
+    }
+    return {
+      midi: row.midi,
+      name: row.name,
+      keys: filterKeys(row.keys),
+      alt: row.alt ? filterKeys(row.alt) : undefined,
+      altLabel: row.altLabel
+    };
   }
 
   function concertToWritten(concertMidi) {
@@ -277,16 +356,8 @@
     return g;
   }
 
-  function renderSax(mount) {
-    mount.innerHTML = "";
-    const svg = svgEl("svg", {
-      class: "sax-svg",
-      viewBox: "0 0 " + VB.w + " " + VB.h,
-      role: "img",
-      "aria-label": "Alto saxophone fingering diagram"
-    });
-
-    const defs = svgEl("defs", {}, [
+  function sharedDefs() {
+    return svgEl("defs", {}, [
       svgEl("linearGradient", { id: "bodyMetal", x1: "0", y1: "0", x2: "1", y2: "0" }, [
         svgEl("stop", { offset: "0%", "stop-color": "#1a140e" }),
         svgEl("stop", { offset: "38%", "stop-color": "#7a5a28" }),
@@ -302,6 +373,12 @@
         svgEl("stop", { offset: "0%", "stop-color": "#c4a056" }),
         svgEl("stop", { offset: "100%", "stop-color": "#4a3518" })
       ]),
+      svgEl("linearGradient", { id: "digitalBody", x1: "0", y1: "0", x2: "1", y2: "0" }, [
+        svgEl("stop", { offset: "0%", "stop-color": "#0e1218" }),
+        svgEl("stop", { offset: "45%", "stop-color": "#1c2430" }),
+        svgEl("stop", { offset: "55%", "stop-color": "#2a3344" }),
+        svgEl("stop", { offset: "100%", "stop-color": "#0e1218" })
+      ]),
       svgEl("filter", { id: "keyGlow", x: "-40%", y: "-40%", width: "180%", height: "180%" }, [
         svgEl("feGaussianBlur", { stdDeviation: "3.5", result: "b" }),
         svgEl("feMerge", {}, [
@@ -310,7 +387,18 @@
         ])
       ])
     ]);
-    svg.appendChild(defs);
+  }
+
+  function renderYas280(mount) {
+    mount.innerHTML = "";
+    const svg = svgEl("svg", {
+      class: "sax-svg acoustic",
+      viewBox: "0 0 " + VB.w + " " + VB.h,
+      role: "img",
+      "aria-label": "YAS-280 原聲中音指法圖"
+    });
+
+    svg.appendChild(sharedDefs());
 
     const body = svgEl("g", { class: "sax-body", "pointer-events": "none" });
 
@@ -417,11 +505,108 @@
     const caption = svgEl("text", {
       class: "sax-caption",
       x: "200", y: "728"
-    }, ["Alto Sax · 記譜音高 Written"]);
+    }, ["YAS-280 · 記譜音高 Written"]);
     svg.appendChild(caption);
 
     mount.appendChild(svg);
     return svg;
+  }
+
+  function renderYds150(mount) {
+    mount.innerHTML = "";
+    const svg = svgEl("svg", {
+      class: "sax-svg digital",
+      viewBox: "0 0 " + VB.w + " " + VB.h,
+      role: "img",
+      "aria-label": "YDS-150 數位薩克斯指法圖"
+    });
+    svg.appendChild(sharedDefs());
+
+    const body = svgEl("g", { class: "sax-body", "pointer-events": "none" });
+    body.appendChild(svgEl("rect", {
+      x: "78", y: "36", width: "244", height: "668", rx: "28",
+      fill: "url(#digitalBody)", stroke: "#2ee9c5", "stroke-width": "1.4", "stroke-opacity": "0.35"
+    }));
+    body.appendChild(svgEl("rect", {
+      x: "108", y: "52", width: "184", height: "36", rx: "8",
+      fill: "#0a0e14", stroke: "#3a4658", "stroke-width": "1"
+    }));
+    body.appendChild(svgEl("text", {
+      class: "region-label", x: "200", y: "76"
+    }, ["YDS-150"]));
+    body.appendChild(svgEl("line", {
+      x1: "118", y1: "348", x2: "282", y2: "348",
+      stroke: "#2ee9c5", "stroke-width": "1", "stroke-opacity": "0.25"
+    }));
+    body.appendChild(svgEl("path", {
+      d: "M150 620 L120 704 L280 704 L250 620 Z",
+      fill: "#141a22", stroke: "#3a4658", "stroke-width": "1.2"
+    }));
+    svg.appendChild(body);
+
+    const keys = svgEl("g", { class: "sax-keys" });
+    keys.appendChild(svgEl("text", { class: "region-label", x: "310", y: "108" }, ["掌鍵"]));
+    keys.appendChild(keyCircle("palmD", 292, 128, 13, "D"));
+    keys.appendChild(keyCircle("palmEb", 322, 152, 11, "E♭"));
+    keys.appendChild(keyCircle("palmF", 286, 160, 11, "F"));
+    keys.appendChild(keyCircle("highFs", 326, 178, 9, "F♯"));
+
+    keys.appendChild(keyOval("octave", 92, 196, 30, 16, "Oct"));
+    keys.appendChild(keyPad("lowA", 70, 248, 48, 26, 10, "低A"));
+    keys.appendChild(svgEl("text", { class: "region-label", x: "94", y: "292" }, ["八度／低A"]));
+
+    keys.appendChild(keyCircle("frontF", 162, 176, 8, "f"));
+    keys.appendChild(keyCircle("L1", 200, 210, 24, "1"));
+    keys.appendChild(keyCircle("Bis", 234, 242, 10, "Bis"));
+    keys.appendChild(keyCircle("L2", 200, 274, 24, "2"));
+    keys.appendChild(keyCircle("L3", 200, 338, 24, "3"));
+
+    keys.appendChild(svgEl("path", {
+      d: "M252 288 h80 a10 10 0 0 1 10 10 v78 a10 10 0 0 1 -10 10 h-56 a10 10 0 0 1 -10 -10 v-88 z",
+      class: "pinky-plate",
+      fill: "#10151c",
+      stroke: "#3a4658",
+      "stroke-width": "1.2"
+    }));
+    keys.appendChild(keyPad("Gs", 258, 292, 36, 22, 8, "G♯"));
+    keys.appendChild(keyPad("lowCs", 258, 320, 36, 24, 8, "C♯"));
+    keys.appendChild(keyPad("lowB", 300, 320, 32, 24, 8, "B"));
+    keys.appendChild(keyPad("lowBb", 278, 350, 54, 22, 8, "B♭"));
+    keys.appendChild(svgEl("text", { class: "region-label", x: "302", y: "388" }, ["左小指"]));
+
+    keys.appendChild(keyCircle("R1", 200, 410, 24, "4"));
+    keys.appendChild(keyCircle("Fs", 238, 444, 9, "F♯"));
+    keys.appendChild(keyCircle("R2", 200, 472, 24, "5"));
+    keys.appendChild(keyCircle("R3", 200, 534, 24, "6"));
+
+    keys.appendChild(keyPad("sideBb", 268, 398, 44, 22, 9, "B♭"));
+    keys.appendChild(keyPad("sideC", 268, 424, 44, 22, 9, "C"));
+    keys.appendChild(keyPad("sideE", 268, 450, 44, 22, 9, "E"));
+    keys.appendChild(svgEl("text", { class: "region-label", x: "290", y: "488" }, ["側鍵"]));
+
+    keys.appendChild(svgEl("path", {
+      d: "M248 560 h64 a10 10 0 0 1 10 10 v54 a10 10 0 0 1 -10 10 h-64 a10 10 0 0 1 -10 -10 v-54 a10 10 0 0 1 10 -10 z",
+      class: "pinky-plate",
+      fill: "#10151c",
+      stroke: "#3a4658",
+      "stroke-width": "1.2"
+    }));
+    keys.appendChild(keyPad("lowEb", 254, 566, 58, 26, 8, "E♭"));
+    keys.appendChild(keyPad("lowC", 254, 598, 58, 26, 8, "C"));
+    keys.appendChild(svgEl("text", { class: "region-label", x: "283", y: "642" }, ["右小指"]));
+
+    svg.appendChild(keys);
+    svg.appendChild(svgEl("text", {
+      class: "sax-caption",
+      x: "200", y: "728"
+    }, ["YDS-150 · 記譜音高 Written"]));
+    mount.appendChild(svg);
+    return svg;
+  }
+
+  function renderSax(mount) {
+    if (currentInstrument.id === "yds-150") return renderYds150(mount);
+    return renderYas280(mount);
   }
 
   function bindKeyTips(mount, tipEl) {
@@ -497,14 +682,20 @@
   global.Fingerings = {
     MIDI_MIN: MIDI_MIN,
     MIDI_MAX: MIDI_MAX,
+    MIDI_LOW_A: MIDI_LOW_A,
     ALTO_TRANSPOSE: ALTO_TRANSPOSE,
     BY_MIDI: BY_MIDI,
     KEY_INFO: KEY_INFO,
+    INSTRUMENTS: INSTRUMENTS,
+    setInstrument: setInstrument,
+    getInstrument: getInstrument,
     midiToName: midiToName,
     nameToMidi: nameToMidi,
     prettyName: prettyName,
     concertName: concertName,
     lookupWritten: lookupWritten,
+    setBbStyle: setBbStyle,
+    getBbStyle: getBbStyle,
     concertToWritten: concertToWritten,
     writtenToConcert: writtenToConcert,
     midiToFreq: midiToFreq,

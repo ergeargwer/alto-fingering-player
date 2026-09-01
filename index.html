@@ -7,7 +7,7 @@
   <meta name="description" content="Alto saxophone fingering practice player. Built-in demo, MusicXML import, live fingering diagram." />
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body class="mode-fingering">
+<body class="mode-fingering prepare">
   <div id="app">
     <header class="topbar">
       <div class="brand">
@@ -18,6 +18,7 @@
         <div class="song-title" id="song-title">Practice Riff</div>
         <div class="song-sub" id="song-sub">4/4 · 示範曲 · 寫法音高</div>
       </div>
+      <div class="inst-chip" id="inst-chip">YAS-280</div>
       <div class="now-note">
         <div class="written-name" id="written-name">G4</div>
         <div class="concert-name" id="concert-name">實音 Concert B♭3</div>
@@ -25,6 +26,18 @@
       <div class="clock">
         <div class="label">播放頭</div>
         <div class="time" id="clock">0:00 / 0:32</div>
+      </div>
+      <div class="top-actions">
+        <label class="part-pick prepare-only" title="只換指法圖，不重載樂譜">
+          我的樂器
+          <select id="instrument-select" aria-label="我的樂器">
+            <option value="yas-280" selected>YAS-280（原聲中音）</option>
+            <option value="yds-150">YDS-150（數位薩克斯）</option>
+          </select>
+        </label>
+        <button class="btn primary prepare-only" id="btn-practice" type="button">開始練習</button>
+        <button class="btn practice-only" id="btn-prepare" type="button">返回準備</button>
+        <button class="btn primary practice-only" id="btn-play-top" type="button">▶ 播放</button>
       </div>
     </header>
 
@@ -95,7 +108,7 @@
           <label>速度 <b id="tempo-val">90</b> BPM</label>
           <input id="tempo" type="range" min="40" max="160" value="90" />
         </div>
-        <div class="slider-block">
+        <div class="slider-block volume-block">
           <label>音量 <b id="vol-val">80</b>%</label>
           <input id="volume" type="range" min="0" max="100" value="80" />
         </div>
@@ -103,40 +116,95 @@
       </div>
     </section>
 
+    <section class="tuner" id="tuner" aria-label="對音">
+      <div class="tuner-head">
+        <h2>對音</h2>
+        <button class="btn" id="btn-mic" type="button">開啟麥克風</button>
+        <span class="tuner-status" id="tuner-status">麥克風關閉 · 音訊只在本機，不會上傳</span>
+        <span class="inst-hint" id="inst-hint" hidden>樂器請選 A.xx Alto 音色</span>
+      </div>
+      <div class="tuner-body">
+        <div class="tuner-target">
+          <div class="tuner-k">目標記譜</div>
+          <div class="tuner-big" id="tuner-target">G4</div>
+          <div class="tuner-sub" id="tuner-target-concert">應對實音 B♭3</div>
+        </div>
+        <div class="tuner-meter" aria-hidden="true">
+          <div class="tuner-scale"><span>−50</span><span>0</span><span>+50</span></div>
+          <div class="tuner-track">
+            <div class="tuner-green"></div>
+            <div class="tuner-needle" id="tuner-needle"></div>
+          </div>
+        </div>
+        <div class="tuner-heard">
+          <div>聽到記譜 <b id="tuner-heard-written">—</b></div>
+          <div>實音 <b id="tuner-heard-concert">—</b></div>
+          <div class="tuner-cents" id="tuner-cents">—</div>
+        </div>
+      </div>
+      <div class="tuner-verdict" id="tuner-verdict">點圖上的音或下方記譜鍵盤，吹同一個音來對準。</div>
+      <div class="tuner-keys" id="tuner-keys" role="group" aria-label="記譜音鍵盤"></div>
+    </section>
+
     <section class="files" aria-label="File and display">
-      <label class="file-btn">
-        載入 MusicXML / JSON
-        <input id="file-input" type="file" accept=".xml,.musicxml,.json,application/xml,application/json,text/xml" />
-      </label>
-      <button class="btn" id="btn-demo" type="button">使用示範曲</button>
-      <label class="part-pick" id="part-wrap" hidden>
-        聲部
-        <select id="part-select" aria-label="選擇聲部"></select>
-      </label>
-      <label class="toggle" title="若檔案是鋼琴實音，勾選後會上移大六度（+9 半音）成中音薩克斯記譜">
-        <input id="concert-toggle" type="checkbox" />
-        此檔為實音
-      </label>
-      <label class="toggle coach" title="按下播放後先打一小節拍點再開始">
-        <input id="count-in" type="checkbox" checked />
-        預備拍
-      </label>
-      <label class="toggle coach" title="第一遍用設定速度的 70%，第二遍起原速">
-        <input id="slow-start" type="checkbox" />
-        慢速起 70%→100%
-      </label>
-      <label class="part-pick coach" title="指法仍是記譜音；聲音為實音（記譜 −9 半音）">
-        音源：Alto 取樣
-        <select id="voice-select" aria-label="音源">
-          <option value="sample" selected>取樣 Alto</option>
-          <option value="synth">後備合成音</option>
-        </select>
-      </label>
+      <div class="files-scroll">
+        <label class="file-btn">
+          載入 MusicXML / JSON / MXL
+          <input id="file-input" type="file" accept=".xml,.musicxml,.mxl,.json,application/xml,application/vnd.recordare.musicxml,application/json,text/xml" />
+        </label>
+        <button class="btn" id="btn-folder" type="button" title="選本機資料夾，列出 .musicxml／.mxl，不上傳">選擇樂譜資料夾</button>
+        <input id="dir-input" type="file" hidden webkitdirectory multiple />
+        <button class="btn" id="btn-demo" type="button">使用示範曲</button>
+        <label class="part-pick" id="part-wrap" hidden>
+          聲部
+          <select id="part-select" aria-label="選擇聲部"></select>
+        </label>
+        <label class="toggle" title="若檔案是鋼琴實音，勾選後會上移大六度（+9 半音）成中音薩克斯記譜">
+          <input id="concert-toggle" type="checkbox" />
+          此檔為實音
+        </label>
+        <label class="toggle coach" title="按下播放後先打一小節拍點再開始">
+          <input id="count-in" type="checkbox" checked />
+          預備拍
+        </label>
+        <label class="toggle coach" title="第一遍用設定速度的 70%，第二遍起原速">
+          <input id="slow-start" type="checkbox" />
+          慢速起 70%→100%
+        </label>
+        <label class="part-pick coach" title="指法仍是記譜音；聲音為實音（記譜 −9 半音）">
+          音源：Alto 取樣
+          <select id="voice-select" aria-label="音源">
+            <option value="sample" selected>取樣 Alto</option>
+            <option value="synth">後備合成音</option>
+          </select>
+        </label>
+        <label class="part-pick coach" title="基本表用側 B♭；Bis 是左1旁小鍵，給已會側鍵的人改練">
+          B♭
+          <select id="bb-select" aria-label="B♭ 指法">
+            <option value="side" selected>側 B♭（基本）</option>
+            <option value="bis">Bis B♭（備用）</option>
+          </select>
+        </label>
+      </div>
       <div class="mode-tabs" role="tablist" aria-label="Display mode">
         <button class="btn active" data-mode="fingering" type="button">指法</button>
         <button class="btn" data-mode="names" type="button">音名</button>
         <button class="btn" data-mode="both" type="button">兩者</button>
       </div>
+    </section>
+
+    <section class="library" id="library" aria-label="本機樂譜">
+      <details id="library-panel">
+        <summary>
+          <span class="lib-summary-title">本機樂譜</span>
+          <span class="lib-summary-meta" id="library-meta">選資料夾後列出曲目，檔案不離開這台機器</span>
+        </summary>
+        <div class="lib-toolbar">
+          <input id="library-filter" type="search" placeholder="搜尋曲名" autocomplete="off" />
+          <span id="library-folder" class="lib-folder"></span>
+        </div>
+        <div class="lib-list" id="library-list"></div>
+      </details>
     </section>
 
     <footer class="readme">
@@ -147,7 +215,12 @@
       · 不亮的鍵＝不按。開管（如 C♯5）＝全部不按。休止＝REST。
       · 空白鍵 Space＝播放／暫停。預備拍＝開吹前一小節拍點。慢速起＝第一遍 70% 再原速。
       · 進度條左右拖 A／B 可循環片段。目前音至少顯示 0.3 秒。
+      · <strong>選擇樂譜資料夾</strong>可列出本機 .musicxml／.mxl（例如 Music/scores），不會做成公開曲庫。
+      · B♭ 預設側鍵；可改 Bis。壓縮 .mxl 可直接載入。
       · <a href="fingering-test.html">指法測驗</a>：用記譜鋼琴核對每一音。曲目只來自本機或示範曲。
+      · 按 <strong>開始練習</strong> 進入跟吹畫面（指法三分之一、音名條三分之二）。停止／暫停不會離開練習；要回來請按「返回準備」。
+      · <strong>我的樂器</strong>：YAS-280 原聲中音（預設）或 YDS-150 數位薩克斯。只換指法圖，不重載樂譜。YDS 請把樂器音色設成 <strong>A.xx Alto</strong>。
+      · <strong>對音</strong>：YAS-280 用本機麥克風（記譜 G4＝實音 B♭3）。YDS-150 預設不用麥，請用耳機聽示範音並按圖上亮鍵。
       · 音源：Alto 取樣來自 Fluid (R3) SoundFont（Frank Wen，<strong>MIT</strong>），預渲染 MP3 via midi-js-soundfonts（MIT）。指法仍為記譜音，聽到的是實音（−9 半音）。靜音只關聲音、游標不停。
     </footer>
   </div>
@@ -157,6 +230,8 @@
   <script src="parser.js"></script>
   <script src="demo.js"></script>
   <script src="sax-audio.js"></script>
+  <script src="library.js"></script>
+  <script src="tuner.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

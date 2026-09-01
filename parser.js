@@ -1,5 +1,5 @@
 /**
- * Client-side MusicXML (minimal subset) + JSON melody parser.
+ * Client-side MusicXML (minimal subset) + compressed .mxl (ZIP) + JSON melody parser.
  * Reads: note / pitch / step / alter / octave / duration / voice / rest,
  * divisions, sound@tempo, metronome/per-minute.
  * Multiple parts: listParts + partId.
@@ -367,7 +367,7 @@
     const trimmed = String(text || "").replace(/^\uFEFF/, "").trim();
     if (!trimmed) throw new Error("檔案是空的");
     const looksJSON = name.endsWith(".json") || trimmed[0] === "{" || trimmed[0] === "[";
-    if (looksJSON && !name.endsWith(".xml") && !name.endsWith(".musicxml")) {
+    if (looksJSON && !name.endsWith(".xml") && !name.endsWith(".musicxml") && !name.endsWith(".mxl")) {
       try {
         return parseJSONSong(trimmed);
       } catch (e) {
@@ -377,10 +377,167 @@
     return parseMusicXML(trimmed, opts);
   }
 
+  function asBytes(input) {
+    if (input instanceof Uint8Array) return input;
+    if (input instanceof ArrayBuffer) return new Uint8Array(input);
+    if (ArrayBuffer.isView && ArrayBuffer.isView(input)) {
+      return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+    }
+    throw new Error("需要檔案內容");
+  }
+
+  function isZip(bytes) {
+    return !!(bytes && bytes.length >= 4 &&
+      bytes[0] === 0x50 && bytes[1] === 0x4b &&
+      (bytes[2] === 0x03 || bytes[2] === 0x05 || bytes[2] === 0x07 || bytes[2] === 0x08));
+  }
+
+  function readZipName(bytes, start, len, utf8) {
+    const slice = bytes.subarray(start, start + len);
+    if (utf8) return new TextDecoder("utf-8").decode(slice);
+    let s = "";
+    for (let i = 0; i < slice.length; i++) s += String.fromCharCode(slice[i]);
+    return s;
+  }
+
+  function listZipEntries(bytes) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let eocd = -1;
+    const min = Math.max(0, bytes.length - 22 - 65535);
+    for (let i = bytes.length - 22; i >= min; i--) {
+      if (view.getUint32(i, true) === 0x06054b50) {
+        eocd = i;
+        break;
+      }
+    }
+    if (eocd < 0) throw new Error("不是有效的 .mxl／ZIP");
+    const entriesCount = view.getUint16(eocd + 10, true);
+    const cdOffset = view.getUint32(eocd + 16, true);
+    if (!entriesCount) throw new Error("壓縮檔是空的");
+    if (cdOffset >= bytes.length) throw new Error("壓縮檔目錄損壞");
+    const entries = [];
+    let off = cdOffset;
+    for (let n = 0; n < entriesCount; n++) {
+      if (off + 46 > bytes.length || view.getUint32(off, true) !== 0x02014b50) {
+        throw new Error("壓縮檔目錄損壞");
+      }
+      const flag = view.getUint16(off + 8, true);
+      const method = view.getUint16(off + 10, true);
+      const compSize = view.getUint32(off + 20, true);
+      const uncompSize = view.getUint32(off + 24, true);
+      const nameLen = view.getUint16(off + 28, true);
+      const extraLen = view.getUint16(off + 30, true);
+      const commentLen = view.getUint16(off + 32, true);
+      const localOff = view.getUint32(off + 42, true);
+      if (compSize === 0xffffffff || uncompSize === 0xffffffff) {
+        throw new Error("不支援 ZIP64，請改用 .musicxml");
+      }
+      const name = readZipName(bytes, off + 46, nameLen, !!(flag & 0x800));
+      entries.push({
+        name: name,
+        method: method,
+        compSize: compSize,
+        uncompSize: uncompSize,
+        localOff: localOff,
+        flag: flag
+      });
+      off += 46 + nameLen + extraLen + commentLen;
+    }
+    return entries;
+  }
+
+  async function inflateRaw(data) {
+    if (typeof DecompressionStream === "undefined") {
+      throw new Error("此瀏覽器無法解開 .mxl，請改匯出 .musicxml");
+    }
+    const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    const buf = await new Response(stream).arrayBuffer();
+    return new Uint8Array(buf);
+  }
+
+  async function readZipFile(bytes, entry) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const off = entry.localOff;
+    if (off + 30 > bytes.length || view.getUint32(off, true) !== 0x04034b50) {
+      throw new Error("壓縮檔項目損壞：" + entry.name);
+    }
+    const nameLen = view.getUint16(off + 26, true);
+    const extraLen = view.getUint16(off + 28, true);
+    const dataOff = off + 30 + nameLen + extraLen;
+    const method = view.getUint16(off + 8, true);
+    const size = entry.compSize;
+    if (dataOff + size > bytes.length) throw new Error("壓縮檔項目不完整：" + entry.name);
+    const payload = bytes.subarray(dataOff, dataOff + size);
+    if (method === 0) return payload;
+    if (method === 8) return inflateRaw(payload);
+    throw new Error("不支援的壓縮方式，請改用 .musicxml");
+  }
+
+  function decodeUtf8(bytes) {
+    return new TextDecoder("utf-8").decode(bytes);
+  }
+
+  function pickScoreEntry(files) {
+    const names = Object.keys(files);
+    function findName(pred) {
+      for (let i = 0; i < names.length; i++) {
+        if (pred(names[i], names[i].replace(/\\/g, "/").toLowerCase())) return files[names[i]];
+      }
+      return null;
+    }
+    return findName(function (orig, lower) {
+      if (lower === "meta-inf/container.xml") return false;
+      return lower.endsWith(".musicxml") || lower.endsWith(".xml");
+    });
+  }
+
+  async function unzipMusicXml(bytes) {
+    const entries = listZipEntries(bytes);
+    const files = {};
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (!e.name || /\/$/.test(e.name)) continue;
+      files[e.name.replace(/\\/g, "/")] = e;
+    }
+    let target = null;
+    const container = files["META-INF/container.xml"] || files["meta-inf/container.xml"];
+    if (container) {
+      const xml = decodeUtf8(await readZipFile(bytes, container));
+      const doc = new DOMParser().parseFromString(xml, "application/xml");
+      const rootfiles = doc.getElementsByTagName("rootfile");
+      for (let i = 0; i < rootfiles.length; i++) {
+        const path = (rootfiles[i].getAttribute("full-path") || "").replace(/\\/g, "/");
+        if (path && files[path]) {
+          target = files[path];
+          break;
+        }
+      }
+    }
+    if (!target) target = pickScoreEntry(files);
+    if (!target) throw new Error("壓縮檔裡找不到 MusicXML");
+    return decodeUtf8(await readZipFile(bytes, target)).replace(/^\uFEFF/, "");
+  }
+
+  async function parseFile(input, filename, opts) {
+    if (typeof input === "string") return parseFileText(input, filename, opts);
+    const bytes = asBytes(input);
+    if (isZip(bytes)) {
+      const xml = await unzipMusicXml(bytes);
+      const song = parseMusicXML(xml, opts);
+      song.source = "mxl";
+      return song;
+    }
+    const text = new TextDecoder("utf-8").decode(bytes);
+    return parseFileText(text, filename, opts);
+  }
+
   global.SongParser = {
     parseMusicXML: parseMusicXML,
     parseJSONSong: parseJSONSong,
     parseFileText: parseFileText,
+    parseFile: parseFile,
+    unzipMusicXml: unzipMusicXml,
+    isZip: isZip,
     listParts: listParts
   };
 })(window);
